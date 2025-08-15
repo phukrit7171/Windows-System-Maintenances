@@ -1,36 +1,54 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-:: Enhanced Windows System Cleanup Script
-:: Improved version with better error handling and safety checks
+:: ========================================
+:: Safer System Cleanup & Maintenance Tool
+:: With preview, confirmations, logging, and space freed report
+:: ========================================
 
-title System Cleanup and Maintenance Tool
+title Safe System Cleanup Tool
 
-:: Check for administrator privileges
+:: Log file
+set "LOG_FILE=%~dp0cleanup_log.txt"
+echo Cleanup Log - %date% %time% > "%LOG_FILE%"
+echo ====================================== >> "%LOG_FILE%"
+
+:: Function: Get folder size in bytes
+:get_size
+set "folder=%~1"
+set size=0
+for /f "usebackq tokens=3" %%A in (`dir "%folder%" /s /-c 2^>nul ^| find "File(s)"`) do (
+    set /a size+=%%A
+)
+set "%~2=%size%"
+goto :eof
+
+:: Check admin rights
 net session >nul 2>&1
-if %errorLevel% NEQ 0 (
+if %errorlevel% NEQ 0 (
     echo.
-    echo [WARNING] This script requires administrator privileges for full functionality.
+    echo [WARNING] This script is best run as Administrator.
     echo Some operations may fail without admin rights.
     echo.
     timeout /t 3 >nul
 )
 
+:: Menu
+:menu
+cls
 echo ========================================
-echo    Windows System Cleanup Tool
+echo    Safe Windows System Cleanup Tool
 echo ========================================
 echo.
-
-:: Ask user what they want to clean
 echo What would you like to clean?
 echo [1] Temporary files only
 echo [2] Temporary files + Recent items
-echo [3] Full cleanup (temp files, recent items, prefetch)
+echo [3] Full cleanup (temp, recent, prefetch)
 echo [4] Full cleanup + System repairs
 echo [5] Exit
 echo.
 choice /C 12345 /M "Choose an option (1-5)"
-set cleanup_level=%errorlevel%
+set "cleanup_level=%errorlevel%"
 
 if %cleanup_level%==5 goto :EOF
 if %cleanup_level%==1 goto :temp_only
@@ -39,143 +57,131 @@ if %cleanup_level%==3 goto :full_cleanup
 if %cleanup_level%==4 goto :full_with_repair
 
 :temp_only
-echo.
-echo [INFO] Cleaning temporary files...
-call :clean_temp_files
+call :confirm_and_clean "Temporary files" clean_temp_files
 goto :completion
 
 :temp_recent
-echo.
-echo [INFO] Cleaning temporary files and recent items...
-call :clean_temp_files
-call :clean_recent_items
+call :confirm_and_clean "Temporary files" clean_temp_files
+call :confirm_and_clean "Recent items" clean_recent_items
 goto :completion
 
 :full_cleanup
-echo.
-echo [INFO] Performing full cleanup...
-call :clean_temp_files
-call :clean_recent_items
-call :clean_prefetch
+call :confirm_and_clean "Temporary files" clean_temp_files
+call :confirm_and_clean "Recent items" clean_recent_items
+call :confirm_and_clean "Prefetch files" clean_prefetch
 goto :completion
 
 :full_with_repair
-echo.
-echo [INFO] Performing full cleanup with system repairs...
-call :clean_temp_files
-call :clean_recent_items
-call :clean_prefetch
-call :system_repairs
+call :confirm_and_clean "Temporary files" clean_temp_files
+call :confirm_and_clean "Recent items" clean_recent_items
+call :confirm_and_clean "Prefetch files" clean_prefetch
+call :confirm_and_clean "System repairs" system_repairs
 goto :completion
 
+
 :: ========================================
-:: CLEANUP FUNCTIONS
+:: FUNCTIONS
 :: ========================================
 
+:confirm_and_clean
+set "desc=%~1"
+set "func=%~2"
+echo.
+echo [PREVIEW] %desc% to be cleaned:
+call :preview_%func%
+echo.
+choice /C YN /M "Proceed with cleaning %desc%?"
+if errorlevel 2 (
+    echo   [SKIP] %desc% >> "%LOG_FILE%"
+    echo   [INFO] Skipped %desc%
+) else (
+    call :%func%
+)
+goto :eof
+
+
+:: PREVIEW FUNCTIONS
+:preview_clean_temp_files
+dir "%temp%" /a /s /b 2>nul
+dir "C:\Windows\Temp" /a /s /b 2>nul
+dir "%USERPROFILE%\AppData\Local\Temp" /a /s /b 2>nul
+goto :eof
+
+:preview_clean_recent_items
+dir "%userprofile%\Recent" /a /s /b 2>nul
+goto :eof
+
+:preview_clean_prefetch
+dir "C:\Windows\Prefetch" /a /s /b 2>nul
+goto :eof
+
+:preview_system_repairs
+echo DISM /CheckHealth and /RestoreHealth
+echo sfc /scannow
+goto :eof
+
+
+:: CLEANUP FUNCTIONS
 :clean_temp_files
 echo [TASK] Cleaning temporary files...
+call :get_size "%temp%" before
+call :get_size "C:\Windows\Temp" before2
+call :get_size "%USERPROFILE%\AppData\Local\Temp" before3
+set /a total_before=before+before2+before3
 
-:: Clean current directory temp files
-if exist "*.tmp" (
-    echo   - Removing .tmp files from current directory...
-    del "*.tmp" /f /q >nul 2>&1
-)
+del /f /s /q "%temp%\*" >nul 2>&1
+del /f /s /q "C:\Windows\Temp\*" >nul 2>&1
+del /f /s /q "%USERPROFILE%\AppData\Local\Temp\*" >nul 2>&1
 
-:: Clean user temp folder
-if exist "%temp%" (
-    echo   - Cleaning user temp folder...
-    pushd "%temp%" >nul 2>&1
-    if !errorlevel!==0 (
-        for /d %%D in (*) do (
-            rd /s /q "%%D" >nul 2>&1
-        )
-        del /f /q * >nul 2>&1
-        popd
-    ) else (
-        echo   [WARNING] Cannot access user temp folder
-    )
-)
+call :get_size "%temp%" after
+call :get_size "C:\Windows\Temp" after2
+call :get_size "%USERPROFILE%\AppData\Local\Temp" after3
+set /a total_after=after+after2+after3
 
-:: Clean Windows temp folder
-if exist "C:\Windows\Temp" (
-    echo   - Cleaning Windows temp folder...
-    del /s /f /q "C:\Windows\Temp\*.*" >nul 2>&1
-    if !errorlevel! NEQ 0 (
-        echo   [WARNING] Some Windows temp files could not be deleted (may require admin rights)
-    )
-)
-
-:: Clean user profile temp
-if exist "%USERPROFILE%\appdata\local\temp" (
-    echo   - Cleaning user profile temp...
-    del /s /f /q "%USERPROFILE%\appdata\local\temp\*.*" >nul 2>&1
-)
-
-echo   [DONE] Temporary files cleanup completed
+set /a freed=total_before-total_after
+echo Freed: !freed! bytes
+echo Temp files cleaned – Freed !freed! bytes >> "%LOG_FILE%"
 goto :eof
 
 :clean_recent_items
 echo [TASK] Cleaning recent items...
-if exist "%userprofile%\Recent" (
-    del /s /f /q "%userprofile%\Recent\*.*" >nul 2>&1
-    echo   [DONE] Recent items cleared
-) else (
-    echo   [INFO] Recent items folder not found
-)
+call :get_size "%userprofile%\Recent" before
+del /f /s /q "%userprofile%\Recent\*" >nul 2>&1
+call :get_size "%userprofile%\Recent" after
+set /a freed=before-after
+echo Freed: !freed! bytes
+echo Recent items cleared – Freed !freed! bytes >> "%LOG_FILE%"
 goto :eof
 
 :clean_prefetch
 echo [TASK] Cleaning prefetch files...
-if exist "C:\Windows\Prefetch" (
-    del /s /f /q "C:\Windows\Prefetch\*.*" >nul 2>&1
-    if !errorlevel!==0 (
-        echo   [DONE] Prefetch files cleared
-    ) else (
-        echo   [WARNING] Could not clear prefetch files (requires admin rights)
-    )
-) else (
-    echo   [INFO] Prefetch folder not accessible
-)
+call :get_size "C:\Windows\Prefetch" before
+del /f /s /q "C:\Windows\Prefetch\*" >nul 2>&1
+call :get_size "C:\Windows\Prefetch" after
+set /a freed=before-after
+echo Freed: !freed! bytes
+echo Prefetch cleared – Freed !freed! bytes >> "%LOG_FILE%"
 goto :eof
 
 :system_repairs
-echo [TASK] Running system integrity checks...
-echo.
-echo This may take several minutes...
-
-echo [SCAN] Running DISM health check...
-DISM /Online /Cleanup-Image /CheckHealth >nul 2>&1
-if !errorlevel!==0 (
-    echo   [INFO] DISM health check passed
-    echo [SCAN] Running DISM restore health...
-    DISM /Online /Cleanup-Image /RestoreHealth
-) else (
-    echo   [WARNING] DISM health check failed or requires admin rights
-)
-
-echo.
-echo [SCAN] Running System File Checker...
+echo [TASK] Running system repairs...
+echo --- System Repairs --- >> "%LOG_FILE%"
+DISM /Online /Cleanup-Image /CheckHealth
+DISM /Online /Cleanup-Image /RestoreHealth
 sfc /scannow
-
-if !errorlevel!==0 (
-    echo   [DONE] System file check completed successfully
-) else (
-    echo   [WARNING] System file check encountered issues
-)
+echo System repairs completed >> "%LOG_FILE%"
 goto :eof
 
+
+:: ========================================
+:: COMPLETION
+:: ========================================
 :completion
 echo.
 echo ========================================
-echo           Cleanup Complete!
+echo         Cleanup Completed!
 echo ========================================
+echo [INFO] Actions logged in: %LOG_FILE%
 echo.
-
-:: Show disk space freed (basic estimate)
-echo [INFO] Cleanup operations completed.
-echo [TIP] Consider running Disk Cleanup utility for additional space savings.
-echo [TIP] Restart your computer if system repairs were performed.
-echo.
-
 pause
-goto :EOF
+goto :menu
