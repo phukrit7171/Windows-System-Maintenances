@@ -44,11 +44,11 @@ echo.
 choice /C 12345 /N /M "Choose an option (1-5): "
 set "cleanup_level=%errorlevel%"
 
-if %cleanup_level%==5 goto :eof
-if %cleanup_level%==1 goto :temp_only
-if %cleanup_level%==2 goto :temp_recent
-if %cleanup_level%==3 goto :full_cleanup
-if %cleanup_level%==4 goto :full_with_repair
+if "%cleanup_level%"=="5" goto :end
+if "%cleanup_level%"=="1" goto :temp_only
+if "%cleanup_level%"=="2" goto :temp_recent
+if "%cleanup_level%"=="3" goto :full_cleanup
+if "%cleanup_level%"=="4" goto :full_with_repair
 
 goto :menu
 
@@ -74,7 +74,6 @@ call :confirm_and_clean "Prefetch files" clean_prefetch
 call :confirm_and_clean "System repairs" system_repairs
 goto :completion
 
-
 :: ========================================
 :: GENERIC CONFIRM + PREVIEW WRAPPER
 :: ========================================
@@ -94,38 +93,37 @@ if errorlevel 2 (
 )
 goto :eof
 
-
 :: ========================================
 :: PREVIEW FUNCTIONS
 :: ========================================
 :preview_clean_temp_files
 if exist "%TEMP%" (
     echo -- %TEMP%
-    dir "%TEMP%" /a /s /b 2>nul | more
+    dir "%TEMP%" /a /s /b 2>nul | findstr . >nul
 ) else echo -- %TEMP% (not found)
 
 if exist "C:\Windows\Temp" (
     echo -- C:\Windows\Temp
-    dir "C:\Windows\Temp" /a /s /b 2>nul | more
+    dir "C:\Windows\Temp" /a /s /b 2>nul | findstr . >nul
 ) else echo -- C:\Windows\Temp (not found)
 
 if exist "%USERPROFILE%\AppData\Local\Temp" (
     echo -- %USERPROFILE%\AppData\Local\Temp
-    dir "%USERPROFILE%\AppData\Local\Temp" /a /s /b 2>nul | more
+    dir "%USERPROFILE%\AppData\Local\Temp" /a /s /b 2>nul | findstr . >nul
 ) else echo -- %USERPROFILE%\AppData\Local\Temp (not found)
 goto :eof
 
 :preview_clean_recent_items
 if exist "%USERPROFILE%\Recent" (
     echo -- %USERPROFILE%\Recent
-    dir "%USERPROFILE%\Recent" /a /s /b 2>nul | more
+    dir "%USERPROFILE%\Recent" /a /s /b 2>nul | findstr . >nul
 ) else echo -- %USERPROFILE%\Recent (not found)
 goto :eof
 
 :preview_clean_prefetch
 if exist "C:\Windows\Prefetch" (
     echo -- C:\Windows\Prefetch
-    dir "C:\Windows\Prefetch" /a /s /b 2>nul | more
+    dir "C:\Windows\Prefetch" /a /s /b 2>nul | findstr . >nul
 ) else echo -- C:\Windows\Prefetch (not found / no access)
 goto :eof
 
@@ -136,12 +134,10 @@ echo   DISM /Online /Cleanup-Image /RestoreHealth
 echo   sfc /scannow
 goto :eof
 
-
 :: ========================================
 :: CLEANUP HELPERS
 :: ========================================
 
-:: Delete contents of a target folder: files + subfolders (not the folder itself)
 :DeleteTree
 set "TGT=%~1"
 if not exist "%TGT%" goto :eof
@@ -159,19 +155,15 @@ for /f "delims=" %%D in ('dir "%TGT%" /ad /b /s 2^>nul ^| sort /R') do (
 )
 goto :eof
 
-:: Get total size (bytes) of a folder via PowerShell (returns 0 if missing)
-:: %1 = folder path, %2 = OUTVAR
 :GetSizeDirPS
 set "PSPATH=%~1"
 set "%~2=0"
-for /f "delims=" %%A in ('powershell -NoProfile -Command "$p=''%PSPATH%''; if (Test-Path -LiteralPath $p) { (Get-ChildItem -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue ^| Measure-Object -Property Length -Sum).Sum } else { 0 }"') do (
+for /f "delims=" %%A in ('powershell -NoProfile -Command "$p='%PSPATH%'; if (Test-Path -LiteralPath $p) { (Get-ChildItem -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum } else { 0 }"') do (
     set "%~2=%%A"
 )
 if not defined %~2 set "%~2=0"
 goto :eof
 
-:: Compute freed = (b1+b2+b3) - (a1+a2+a3) using 64-bit math in PowerShell
-:: %1..%3 = before1..before3, %4..%6 = after1..after3, %7 = OUTVAR
 :SumFreedPS_3
 set "B1=%~1" & set "B2=%~2" & set "B3=%~3"
 set "A1=%~4" & set "A2=%~5" & set "A3=%~6"
@@ -181,8 +173,6 @@ for /f "delims=" %%F in ('powershell -NoProfile -Command "[int64]$b1=%B1%; [int6
 )
 goto :eof
 
-:: Compute freed = (before - after) 64-bit
-:: %1=before %2=after %3=OUTVAR
 :DiffFreedPS_1
 set "BB=%~1"
 set "AA=%~2"
@@ -192,7 +182,6 @@ for /f "delims=" %%F in ('powershell -NoProfile -Command "[int64]$b=%BB%; [int64
 )
 goto :eof
 
-
 :: ========================================
 :: CLEANUP TASKS
 :: ========================================
@@ -200,80 +189,60 @@ goto :eof
 echo [TASK] Cleaning temporary files...
 echo --- Temp Files --- >> "%LOG_FILE%"
 
-:: Measure before
 call :GetSizeDirPS "%TEMP%" B1
 call :GetSizeDirPS "C:\Windows\Temp" B2
 call :GetSizeDirPS "%USERPROFILE%\AppData\Local\Temp" B3
 
-:: Delete content
 call :DeleteTree "%TEMP%"
 call :DeleteTree "C:\Windows\Temp"
 call :DeleteTree "%USERPROFILE%\AppData\Local\Temp"
 
-:: Measure after
 call :GetSizeDirPS "%TEMP%" A1
 call :GetSizeDirPS "C:\Windows\Temp" A2
 call :GetSizeDirPS "%USERPROFILE%\AppData\Local\Temp" A3
 
-:: Compute freed
 call :SumFreedPS_3 %B1% %B2% %B3% %A1% %A2% %A3% FREED
 echo Freed: %FREED% bytes
 echo Temp files cleaned – Freed %FREED% bytes >> "%LOG_FILE%"
 goto :eof
 
-
 :clean_recent_items
 echo [TASK] Cleaning recent items...
 echo --- Recent Items --- >> "%LOG_FILE%"
 
-:: Measure before
 call :GetSizeDirPS "%USERPROFILE%\Recent" B
-
-:: Delete content
 call :DeleteTree "%USERPROFILE%\Recent"
-
-:: Measure after
 call :GetSizeDirPS "%USERPROFILE%\Recent" A
 
-:: Freed
 call :DiffFreedPS_1 %B% %A% FREED
 echo Freed: %FREED% bytes
 echo Recent items cleared – Freed %FREED% bytes >> "%LOG_FILE%"
 goto :eof
 
-
 :clean_prefetch
 echo [TASK] Cleaning prefetch files...
 echo --- Prefetch Files --- >> "%LOG_FILE%"
 
-:: Measure before
 call :GetSizeDirPS "C:\Windows\Prefetch" B
-
-:: Delete content
 call :DeleteTree "C:\Windows\Prefetch"
-
-:: Measure after
 call :GetSizeDirPS "C:\Windows\Prefetch" A
 
-:: Freed
 call :DiffFreedPS_1 %B% %A% FREED
 echo Freed: %FREED% bytes
 echo Prefetch cleared – Freed %FREED% bytes >> "%LOG_FILE%"
 goto :eof
 
-
 :system_repairs
 echo [TASK] Running system repairs...
 echo --- System Repairs --- >> "%LOG_FILE%"
 echo DISM /Online /Cleanup-Image /CheckHealth >> "%LOG_FILE%"
-DISM /Online /Cleanup-Image /CheckHealth
+DISM /Online /Cleanup-Image /CheckHealth >> "%LOG_FILE%" 2>&1
 echo DISM /Online /Cleanup-Image /RestoreHealth >> "%LOG_FILE%"
-DISM /Online /Cleanup-Image /RestoreHealth
+DISM /Online /Cleanup-Image /RestoreHealth >> "%LOG_FILE%" 2>&1
 echo sfc /scannow >> "%LOG_FILE%"
-sfc /scannow
+sfc /scannow >> "%LOG_FILE%" 2>&1
 echo System repairs completed >> "%LOG_FILE%"
 goto :eof
-
 
 :: ========================================
 :: COMPLETION
@@ -287,3 +256,8 @@ echo [INFO] Actions logged in: %LOG_FILE%
 echo.
 pause
 goto :menu
+
+:end
+echo Exiting...
+endlocal
+exit /b
